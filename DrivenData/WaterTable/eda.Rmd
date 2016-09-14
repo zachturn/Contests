@@ -1,0 +1,103 @@
+---
+title: "Water Table EDA"
+author: "Zach Turner"
+date: "September 10, 2016"
+output: html_document
+---
+
+This notebook will be used to explore the Water Table dataset.
+
+### Training Data
+The training data comes in two parts, one is the independent variables and the second is the dependent variable. I'll combine those together right away before doing anything else.
+
+```{r,message=FALSE,warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+setwd("~/Git/Contests/DrivenData/WaterTable")
+training1 <- read.csv("training.csv",sep=",")
+training2 <- read.csv("training_labels.csv",sep=",")
+training <- inner_join(training1,training2,by="id")
+rm(training1,training2)
+```
+
+### Basics
+
+First I want to see a few things about the dataset as a whole, and then I'll break a bit deeper into looking at the numeric/character variables.
+
+```{r}
+dim(training)
+
+# Return any variables with missing values
+colnames(training)[lapply(training,function(x) mean(is.na(x)))>0]
+
+# Target
+ggplot(data=training) + geom_bar(aes(x=status_group,y=..count..),fill="dodgerblue") + ggtitle("Target Distribution")
+
+```
+
+So I don't have any missing data, which is great. I can also see that most of the pumps are either functional or not functional. Pumps that need repair are more rare and will probably be a bit tougher to identify. 
+
+```{r}
+table(sapply(training,class))
+```
+
+We have 31 factor variables (including the response), and then 10 numeric predictors. 
+
+### Numeric Data  
+
+Since I don't have too many numeric variables, it won't be too tough to explore them individually. I want to examine their histograms and then their correlations with the target.
+
+```{r}
+numvars <- colnames(training)[sapply(training,class)!="factor"]
+numvars
+```
+
+#### Histograms
+
+I want to examine some histograms broken apart by their target group to see how the distributions may differ.
+
+```{r}
+training %>% filter(amount_tsh < 10000) %>% ggplot(aes(x=amount_tsh)) + geom_histogram(aes(y=..count../sum(..count..)),bins=50) + facet_wrap(~status_group) + labs(ylab("Proportion"))
+```
+
+So across the board, amount_tsh is mostly 0. (Amount_tsh refers to the height of the water discharge location relative to the water in the tank)
+
+```{r}
+training %>% ggplot(aes(x=gps_height)) + geom_histogram(aes(y=..count../sum(..count..)),bins=50) + facet_wrap(~status_group) + labs(ylab("Proportion"))
+```
+
+We can sort of see the same thing with the gps_height, which is the altitude of the well (most are at sea level).
+
+I also want to see if I can carve out any details from the latitude/longitude.
+
+```{r}
+training %>% filter(longitude>0) %>% ggplot(aes(x=longitude,fill=as.factor(status_group))) + geom_histogram(position="fill",binwidth=0.3) + scale_fill_brewer(palette="Blues") + labs(fill="Status Group")
+```
+
+```{r}
+training %>% filter(latitude < -1) %>% ggplot(aes(x=latitude,fill=as.factor(status_group))) + geom_histogram(position="fill",binwidth=0.3) + scale_fill_brewer(palette="Blues") + labs(fill="Status Group")
+```
+
+There appear to be some regions where the pumps are more functional. Probably the most interesting find is that longitudes near 30 tend to have more pumps that need repair -- this may come in handy.
+
+The vast majority of num_private is 0, so I want to split this out separately.
+```{r}
+training %>% filter(num_private==0) %>% ggplot() + geom_bar(aes(x=num_private,fill=status_group),position = "fill")
+
+training %>% filter(num_private !=0,num_private < 1000) %>% ggplot() + geom_histogram(aes(x=num_private),bins=50) + facet_wrap(~status_group)
+```
+
+This doesn't really seem to tell us anything new.
+
+```{r}
+training %>% filter(population < 1000) %>% ggplot() + geom_histogram(aes(population),fill="dodgerblue")
+```
+
+I would expect to see that the older pumps are failing more often.
+
+```{r}
+training %>% filter(construction_year>0) %>% ggplot() + geom_histogram(aes(x=construction_year,fill=status_group),bins=54)
+```
+
+Ok, this is good. The older pumps tend to be less functional. However, we only have the ages for roughly half of the observations.
