@@ -14,9 +14,12 @@ The training data comes in two parts, one is the independent variables and the s
 library(dplyr)
 library(ggplot2)
 library(cowplot)
+library(reshape2)
+library(scales)
+library(knitr)
 setwd("~/Git/Contests/DrivenData/WaterTable")
-training1 <- read.csv("training.csv",sep=",")
-training2 <- read.csv("training_labels.csv",sep=",")
+training1 <- read.csv("training.csv",sep=",",stringsAsFactors=FALSE)
+training2 <- read.csv("training_labels.csv",sep=",",stringsAsFactors=FALSE)
 training <- inner_join(training1,training2,by="id")
 rm(training1,training2)
 ```
@@ -49,8 +52,14 @@ We have 31 factor variables (including the response), and then 10 numeric predic
 Since I don't have too many numeric variables, it won't be too tough to explore them individually. I want to examine their histograms and then their correlations with the target.
 
 ```{r}
-numvars <- colnames(training)[sapply(training,class)!="factor"]
+numvars <- colnames(training)[sapply(training,class)!="character"]
 numvars
+```
+
+These region_code and district_code variables aren't truly continuous so I want to change those data types and worry about them later.
+
+```{r}
+training[c("region_code","district_code")] <- lapply(training[c("region_code","district_code")],as.character)
 ```
 
 #### Histograms
@@ -83,7 +92,7 @@ There appear to be some regions where the pumps are more functional. Probably th
 
 The vast majority of num_private is 0, so I want to split this out separately.
 ```{r}
-training %>% filter(num_private==0) %>% ggplot() + geom_bar(aes(x=num_private,fill=status_group),position = "fill")
+training %>% filter(num_private==0) %>% ggplot() + geom_bar(aes(x=num_private,fill=status_group),position = "dodge") + theme(axis.ticks.x=element_blank(),axis.text.x=element_blank()) + ggtitle("Num_Private=0")
 
 training %>% filter(num_private !=0,num_private < 1000) %>% ggplot() + geom_histogram(aes(x=num_private),bins=50) + facet_wrap(~status_group)
 ```
@@ -101,3 +110,52 @@ training %>% filter(construction_year>0) %>% ggplot() + geom_histogram(aes(x=con
 ```
 
 Ok, this is good. The older pumps tend to be less functional. However, we only have the ages for roughly half of the observations.
+
+### Correlation
+```{r}
+numvars <- colnames(training)[sapply(training,class)!="character"]
+matrix <- round(cor(training[,numvars]),2)
+matrix[upper.tri(matrix)] <- NA
+melted <- melt(matrix,na.rm=TRUE)
+melted <- melted %>% arrange(Var1,Var2)
+ggplot(data=melted) + geom_tile(aes(Var1,Var2,fill=value),color="white") + xlim(rev(levels(melted$Var1))) + scale_fill_gradient2("Correlation",low="dodgerblue",high="tomato") + labs(x="",y="",title="Correlation Matrix") + theme(axis.text.x=element_text(angle=90,hjust=1))
+```
+
+I find it somewhat interesting that there appears to be a correlation between construction year and the altitude of the well. However, this also appears to be related to the longitude. I imagine this is showing some type of regional spread in the well construction.
+
+### Categorical Data
+
+Before I dig any deeper I want to see what type of cardinality that I'm working with. 
+
+```{r}
+char_vars <- colnames(training)[sapply(training,class)=="character"]
+levels_df <- data.frame(Variable=char_vars,Levels=unname(sapply(training[char_vars],function(x) length(unique(x)))))
+kable(levels_df)
+```
+
+Some of these variables are going to cause issues because they have too many levels. My initial thoughts:
+
+* `wpt_name`, `subvillage`, and `ward` have too many levels to work with, but I think there's enough other geographical data to serve as proxies (basin, region, lat/long, etc.). 
+* `Installer` is likely important so I don't want to give up on that variable just yet.
+* `Scheme_management` is likely a suitable substitute for `scheme_name`.
+
+
+
+#### Date Recorded
+
+If there's no noticeable seasonal trends in the date_recorded variable I will just get rid of that as well.
+
+```{r}
+library(lubridate)
+training$date_recorded <- as.Date(training$date_recorded)
+ggplot(data=training) + geom_bar(aes(x=year(date_recorded),y=..count..,fill=status_group),position="fill")
+ggplot(data=training) + geom_bar(aes(x=month(date_recorded,label=TRUE),y=..count..,fill=status_group),position="fill") + labs(x="") + theme(axis.text.x=element_text(angle=90,hjust=1))
+```
+
+I'll create a year and month recorded variable since there's a couple of points where we have some spikes in non-functional pumps.
+
+```{r}
+training$month_recorded <- month(training$date_recorded,label=TRUE)
+training$year_recorded <- year(training$date_recorded)
+training <- subset(training,select=-c(date_recorded))
+```
